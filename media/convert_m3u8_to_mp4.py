@@ -1,6 +1,5 @@
 import os
 import re
-import time
 import subprocess
 
 
@@ -23,8 +22,8 @@ def extract_uris(file_path, video_uri_filter, audio_uri_filter):
     return video_uri, audio_uri
 
 # Function to traverse directories and process m3u8 files
-def process_directory(base_dir):
-    for root, dirs, files in os.walk(base_dir):
+def process_directory(base_directory, video_uri_filter, audio_uri_filter):
+    for root, dirs, files in os.walk(base_directory):
         if 'done' in root:
             # adds an option to prefix 'done' to any directories that you want skipped
             print('skipping', root)
@@ -32,26 +31,41 @@ def process_directory(base_dir):
         for file in files:
             if file.endswith(".m3u8"):
                 file_path = os.path.join(root, file)
-                video_uri, audio_uri = extract_uris(file_path)
-                if video_uri and audio_uri:
-                    new_filename = os.path.splitext(file)[0] + '_' + str(time.time()) + "_combined.mp4"
-                    output_file_path = os.path.join(root, new_filename)
-                    output_dir = os.path.dirname(output_file_path)
-                    os.makedirs(output_dir, exist_ok=True)
-                    ffmpeg_command = [
-                        "ffmpeg",
-                        "-i", video_uri,
-                        "-i", audio_uri,
-                        "-bsf:a", "aac_adtstoasc",
-                        "-vcodec", "copy",
-                        "-c", "copy",
-                        "-crf", "50",
-                        output_file_path
+                video_uri, audio_uri = extract_uris(file_path, video_uri_filter, audio_uri_filter)
+                output_name = os.path.splitext(file)[0]
+                print('output is', output_name)
+                if audio_uri and video_uri:
+                    audio_output = f"{output_name}_audio.mp4"
+                    audio_command = [
+                        "ffmpeg", "-i", audio_uri, "-vn", "-acodec", "copy", audio_output
                     ]
+                    print(f"Downloading audio to {audio_output}...")
+                    subprocess.run(audio_command, check=True)
+
+                    video_output = f"{output_name}_video.mp4"
+                    video_command = [
+                        "ffmpeg", "-i", video_uri, "-an", "-vcodec", "copy", video_output
+                    ]
+                    print(f"Downloading video to {video_output}...")
+                    subprocess.run(video_command, check=True)
+
+                    # merge the audio and video streams into a single file
+                    combined_output = f"{output_name}.mp4"
+                    merge_command = [
+                        "ffmpeg", "-i", f"{audio_output}", "-i", f"{video_output}", "-c", "copy", combined_output
+                    ]
+                    print(f"Merging audio and video into {combined_output}...")
+                    subprocess.run(merge_command, check=True)
+                    print(f"Combined file saved as {combined_output}.")
+                    
+                    print("Removing intermediate files...")
                     try:
-                        subprocess.run(ffmpeg_command, check=True, shell=True)
-                    except subprocess.CalledProcessError as e:
-                        print(f"failed to execute ffmpeg command for {video_uri}", "\n", "error: {e}", "\n")
+                        print(f"Deleting {audio_output}...")
+                        os.remove(audio_output)
+                        print(f"Deleting {video_output}...")
+                        os.remove(video_output)
+                    except OSError as e:
+                        print(f"Error while deleting files: {e}")
                 else:
                     print("URIs not scraped. Please ensure both audio and video URIs are set")
 
@@ -59,6 +73,7 @@ def process_directory(base_dir):
 
 if __name__ == "__main__":
     # base_directory should be the top level of your folder strucutre where your list of m3u8 files are saved.
+    # could also be a flat directory with all your m3u8 files in your base_directory
     # e.g. 
     # top_level
     #..subdir0
@@ -66,9 +81,7 @@ if __name__ == "__main__":
     #........myfile.m3u8
     #....subdir2
     #........myfile2.m3u8
-    base_directory = "workouts"
+    base_directory = "dir_containing_your_m3u8_files"
     video_uri_filter = "RESOLUTION=1920x1080" # can be any keyword you want to target from the m3u8 file that is specific to the video url you want
     audio_uri_filter = 'GROUP-ID="audio-high"' # can be any keyword you want to target from the m3u8 file that is specific to the audio url you want
     process_directory(base_directory, video_uri_filter, audio_uri_filter)
-
-
